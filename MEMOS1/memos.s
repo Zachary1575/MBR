@@ -33,33 +33,20 @@ _start:
 	# Clear EAX register
 	xorw %ax, %ax
 
-	# PURE WRITING
-	movw $0xB800, %ax
-	movw %ax, %es
-	movw $0x07E1, %es:(0)
+	# While we are at it, lets clear the DS register
+	movw %ax, %ds
 
-	# PRINTING A CHARACTER 'A' in BIOS
-	movb $0x03, %ah
-	xor %al, %al
-	int $0x10
-
-	movb $0x02, %ah
-	xor %bh, %bh
-	xor %dh, %dh
-	xor %dl, %dl
-	int $0x10
-
-	movb $'A', %al
-	movb $0x0E, %ah
-	movw $0x0007, %bx
-	int $0x10
+	# WRITING A CHARACTER "A" in BIOS
+	mov $0x0e41, %ax
+	xorw %bx, %bx
+	int $0x10 # BIOS Video Interrupt
 	
 halt:
 	hlt
 	jmp halt
 
 	# Master Boot Record Signature
-	.org 0x1FE
+	.space 510 - (. - _start) # Pad until we slap the sig in the back
 
 	.byte 0x55
 	.byte 0xAA

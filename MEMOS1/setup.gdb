@@ -1,5 +1,5 @@
 # Load the ELF executable
-file ./memos
+file ./memos_ELF
 
 # Then configure TUI
 tui enable
