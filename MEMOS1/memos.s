@@ -50,10 +50,11 @@ _start:
 	leaw buffer, %di # We load the buffer offset address int %di
 
 	# Load the magic number in EDX $0x534D4150
-	movw $0x4150, %dx
+	movw $0x0534D, %dx
+	movw $0x4150, %bx
 	
 	# Load the BIOS Memory Probe command into EAX
-	movw $0xE820, %ax
+	movw %ax, 0xe820
 
 	# Load 24 in the ECX, I assume counting the buffer length
 	movw $24, %cx
@@ -61,7 +62,7 @@ _start:
 	# Trigger BIOS function call
 	int $0x15
 
-	cmp $0x4150, %ax
+	cmp $0x0534D, %dx
 	jne error
 
 error:
