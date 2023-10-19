@@ -50,11 +50,12 @@ _start:
 	leaw buffer, %di # We load the buffer offset address int %di
 
 	# Load the magic number in EDX $0x534D4150
-	movw $0x0534D, %dx
-	movw $0x4150, %bx
+	.byte 0x66
+	movl $0x0534D4150, %edx
 	
 	# Load the BIOS Memory Probe command into EAX
-	movw %ax, 0xe820
+	.byte 0x66
+	movl $0xe820, %eax
 
 	# Load 24 in the ECX, I assume counting the buffer length
 	movw $24, %cx
