@@ -88,8 +88,20 @@ jmpin:
 
 getmemlength:
 	call printA # Prints "Address range["
-	movl %es:0(%di), %ecx
+	movl %es:0(%di), %ecx # Gets the base address of the memory block in map
 	call print_32bit # This prints the 32 bit value of whats in %ecx
+	call print_colon # PRints ":"
+	
+	# Calculating the end address
+	.byte 0x66
+	pushl %eax # Save the state of %eax
+	movl %es:8(%di), %eax # Get the size of the memory page
+	.byte 0x66
+	addl %eax, %ecx # We calculated the end address
+	call print_32bit
+	.byte 0x66
+	popl %eax # Pop back the state of the %eax register
+
 	call print_newline # Prints new line!
 
 
@@ -113,6 +125,20 @@ memfinish:
 	jmp halt
 
 # ============= ADDRESS PRINT FUNCTIONS =============
+
+# Prints ':' using BIOS interrupts
+print_colon:
+	.byte 0x66
+	pushl %eax
+	
+	movb $':', %al
+	movb $0x0E, %ah
+	int $0x10
+
+	.byte 0x66
+	popl %eax
+
+	ret
 
 # Prints '\n' or new line using BIOS interrupts
 print_newline:
