@@ -22,15 +22,15 @@ _start:
 	#============= PRINT INTRO function =============
 
 	# First we load the effective address into the %si segment register
-	leaw msg, %si # "Load Effective Address Word"
-	movw msg_len, %cx # We need to decrement after each print
+	#leaw msg, %si # "Load Effective Address Word"
+	#movw msg_len, %cx # We need to decrement after each print
 	
-1:
-	# lodsb automatically increments the %si register
-	lodsb # Loads address in %si to %al (accumulator)
-	movb $0x0E, %ah # %ah is used to set display attributes, $0x0E is B & W
-	int $0x10 # BIOS interrupt, writes what is in AL
-	loop 1b #'b' automatically decrements %cx until 0 (works only with #s)
+#1:
+	#lodsb automatically increments the %si register
+	#lodsb # Loads address in %si to %al (accumulator)
+	#movb $0x0E, %ah # %ah is used to set display attributes, $0x0E is B & W
+	#int $0x10 # BIOS interrupt, writes what is in AL
+	#loop 1b #'b' automatically decrements %cx until 0 (works only with #s)
 
 	# ============ BIOS MEMORY MAP PROBE =============
 	# Clear all the general purpose registers after the printing
@@ -62,9 +62,143 @@ _start:
 	
 	# Trigger BIOS function call
 	int $0x15
-
-	cmp $0x0534D, %dx
+	
+	.byte 0x66
+	cmp $0x0534D4150, %eax # Check for SMAP returned in EAX
 	jne error
+	
+	.byte 0x66
+	testl %ebx, %ebx
+	jz error # OSdev: ebx = 0 implies list is only 1 entry long (worthless)
+
+	jmp jmpin
+
+# ============= BIOS MEMORY COUNTING LOGIC ===============
+memloop:
+	.byte 0x66
+	movl $0xe820, %eax # ecx gets trasged on every int 0x15 call
+	movw $24, %cx
+	int $0x15
+	jc memfinish # We finished as carry flag has been set
+
+jmpin:
+	jcxz skipentry # Skip this current entry if cx is zero (no bytes)
+	cmpb $0x14, %cl # See if cx register has 20 bytes
+	je getmemlength
+
+getmemlength:
+	call printA # Prints "Address range["
+	movl %es:0(%di), %ecx
+	call print_32bit # This prints the 32 bit value of whats in %ecx
+	call print_newline # Prints new line!
+
+
+	# movw %es:16(%di), %cx # Get status and move to %cx
+	# [Insert logic where if 1, add to total memory]
+	#.byte 0x66
+	#movl %es:8(%di), %ecx # Get the lower uint32_t of memory region length
+	#or %es:12(%di), %ecx
+	#jz skipentry # If we get 0, we skip entry
+
+
+	inc %bp
+	add $24, %di
+
+skipentry:
+	.byte 0x66
+	testl %ebx, %ebx # if ebx resets to 0, the list is complete
+	jne memloop
+
+memfinish:
+	jmp halt
+
+# ============= ADDRESS PRINT FUNCTIONS =============
+
+# Prints '\n' or new line using BIOS interrupts
+print_newline:
+	.byte 0x66
+	pushl %eax
+
+	movb $0x0E, %ah
+	
+	movb $0x0D, %al # 0x0D: Carriage Return (CR)
+	int $0x10
+
+	movb $0x0A, %al # 0x0A: Line Feed (LF)
+	int $0x10
+	
+	.byte 0x66
+	popl %eax
+
+	ret
+
+# Prints out 32 bit hexadecimal values
+print_32bit:
+	.byte 0x66
+	pushl %ecx
+	.byte 0x66
+	pushl %eax
+
+	movb $'0', %al
+	movb $0x0E, %ah
+	int $0x10
+
+	movb $'x', %al
+	movb $0x0E, %ah
+	int $0x10
+
+	.byte 0x66
+	movl %ecx, %eax # Move the address from ecx to eax temporarily
+	movw $8, %cx # 8 hex digits to be printed
+
+print_hex:
+	# Rotate the left 4 bits to get the next nibble into lower 4 bits
+	roll $4, %eax 
+	andb $0x0F, %al # Isolate the nibble
+	cmpb $9, %al # Check if the nibble is 9 or less
+	jbe print_digit # If it is 9 or less, print the digit
+	addb $7, %al # Convert to hex 'A' to 'F' if it's 10 to 15
+
+print_digit:
+	addb $'0', %al # Convert to ASCII
+	movb $0x0E, %ah
+	int $0x10
+	dec %cx
+
+	testw %cx, %cx
+	jnz print_hex
+
+	.byte 0x66
+	popl %eax
+	.byte 0x66
+	popl %ecx
+
+	ret
+
+printA:	
+	# Just in case, we preserve state
+	pushw %si
+	pushw %cx
+	pushw %ax
+
+	leaw add_msg_beg, %si
+	movw add_msg_beg_len, %cx
+local_1:
+	lodsb
+	movb $0x0E, %ah
+	int $0x10
+	dec %cx
+	
+	testw %cx, %cx
+	jnz local_1
+
+	popw %ax
+	popw %cx
+	popw %si
+
+	ret
+
+# ============= States to be in... =================
 
 error:
 	# We ran into an error in the bootloader!
@@ -76,20 +210,27 @@ halt:
 	hlt
 	jmp halt
 
-# ============== Functions & References ================
+# ============== Functions & messages ================
 print:	
 	pushw %dx # Save the return address onto DX Register
 	movb %al, %dl # Move 8 lower bits of AL to DL
 
+# ===
+add_msg_beg:
+	.asciz "Address range["
+add_msg_beg_len:
+	.word . - add_msg_beg
+# ===
 msg:
 	.asciz "MemOS: Welcome *** System Memory is: "
 msg_len:
-	.word . - msg # The Message Length
+	.word . - msg
+# ===
 msg_units:
 	.asciz "MB"
 msg_ulen:
 	.word . - msg_ulen
-
+# ===
 	# Master Boot Record (MBR) Signature
 	.space 510 - (. - _start) # Pad until we slap the sig in the back
 
