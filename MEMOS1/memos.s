@@ -90,7 +90,7 @@ getmemlength:
 	call printA # Prints "Address range["
 	movl %es:0(%di), %ecx # Gets the base address of the memory block in map
 	call print_32bit # This prints the 32 bit value of whats in %ecx
-	call print_colon # PRints ":"
+	call print_colon # Prints ":"
 	
 	# Calculating the end address
 	.byte 0x66
@@ -101,16 +101,18 @@ getmemlength:
 	call print_32bit
 	.byte 0x66
 	popl %eax # Pop back the state of the %eax register
+	
+	# Calculating the Status of memory page
+	call printB
+	xorl %ecx, %ecx # Clear the ecx register for status
+	movw %es:16(%di), %cx # Get status of the memory page
+	call print_32bit
 
 	call print_newline # Prints new line!
 
-
-	# movw %es:16(%di), %cx # Get status and move to %cx
-	# [Insert logic where if 1, add to total memory]
-	#.byte 0x66
 	#movl %es:8(%di), %ecx # Get the lower uint32_t of memory region length
 	#or %es:12(%di), %ecx
-	#jz skipentry # If we get 0, we skip entry
+	
 
 
 	inc %bp
@@ -164,6 +166,10 @@ print_32bit:
 	pushl %ecx
 	.byte 0x66
 	pushl %eax
+	.byte 0x66
+	pushl %ebx
+	.byte 0x66
+	pushl %edx
 
 	movb $'0', %al
 	movb $0x0E, %ah
@@ -175,25 +181,36 @@ print_32bit:
 
 	.byte 0x66
 	movl %ecx, %eax # Move the address from ecx to eax temporarily
+	.byte 0x66
+	xorl %ecx, %ecx
 	movw $8, %cx # 8 hex digits to be printed
 
 print_hex:
 	# Rotate the left 4 bits to get the next nibble into lower 4 bits
-	roll $4, %eax 
-	andb $0x0F, %al # Isolate the nibble
-	cmpb $9, %al # Check if the nibble is 9 or less
+	roll $4, %eax
+	xorl %ebx, %ebx # Clear the EBX
+	mov %al, %bl # Preserve the value in BL
+	andb $0x0F, %bl # Mask out the upper 4 bits
+	cmpb $9, %bl # Check if the nibble is 9 or less
 	jbe print_digit # If it is 9 or less, print the digit
-	addb $7, %al # Convert to hex 'A' to 'F' if it's 10 to 15
+	addb $7, %bl # Convert to hex 'A' to 'F' if it's 10 to 15
 
 print_digit:
-	addb $'0', %al # Convert to ASCII
+	movl %eax, %edx
+	addb $'0', %bl # Convert to ASCII
+	movb %bl, %al # Copy the results back to AL for BIOS printing
 	movb $0x0E, %ah
-	int $0x10
+	int $0x10 # BIOS interrupts change EAX
 	dec %cx
+	movl %edx, %eax # Move it back after BIOS change
 
 	testw %cx, %cx
 	jnz print_hex
-
+	
+	.byte 0x66
+	popl %edx
+	.byte 0x66
+	popl %ebx
 	.byte 0x66
 	popl %eax
 	.byte 0x66
@@ -224,6 +241,27 @@ local_1:
 
 	ret
 
+printB:
+	pushw %si
+	pushw %cx
+	pushw %ax
+
+	leaw add_msg_end, %si
+	movw add_msg_end_len, %cx
+local_2:
+	lodsb
+	movb $0x0E, %ah
+	int $0x10
+	dec %cx
+
+	testw %cx, %cx
+	jnz local_2
+
+	popw %ax
+	popw %cx
+	popw %si
+
+	ret
 # ============= States to be in... =================
 
 error:
@@ -246,6 +284,11 @@ add_msg_beg:
 	.asciz "Address range["
 add_msg_beg_len:
 	.word . - add_msg_beg
+# ===
+add_msg_end:
+	.asciz " ] status:"
+add_msg_end_len:
+	.word . - add_msg_end
 # ===
 msg:
 	.asciz "MemOS: Welcome *** System Memory is: "
