@@ -42,6 +42,10 @@ _start:
 	# BIOS Memory detection needs ES:DI registers so clear em
 	movw %ax, %es
 	movw %ax, %di
+
+	# We are going to use ebp to count the free memory size in MB
+	.byte 0x66
+	xorl %ebp, %ebp
 	
 	# First, we load ES:DI with our buffer (24 bytes)
 	# Assumes only the buffer here exists
@@ -87,7 +91,13 @@ jmpin:
 	je getmemlength
 
 getmemlength:
-	call printA # Prints "Address range["
+	pushw %si # Save si for printing...
+	pushw %cx # Save cx for printing...
+	leaw add_msg_beg, %si
+	movw add_msg_beg_len, %cx
+	call print # Prints "Address range["
+	popw %si # Restore state...
+	popw %cx # Restore state...
 	movl %es:0(%di), %ecx # Gets the base address of the memory block in map
 	call print_32bit # This prints the 32 bit value of whats in %ecx
 	call print_colon # Prints ":"
@@ -103,28 +113,86 @@ getmemlength:
 	popl %eax # Pop back the state of the %eax register
 	
 	# Calculating the Status of memory page
-	call printB
+	pushw %si # Save si for printing...
+	pushw %cx # Save cv for printing...
+	leaw add_msg_end, %si
+	movw add_msg_end_len, %cx
+	call print
+	popw %cx # Restore state...
+	popw %si # Restore state...
 	xorl %ecx, %ecx # Clear the ecx register for status
 	movw %es:16(%di), %cx # Get status of the memory page
+	cmpw $0x1, %cx
+	call strip_memory_length
 	call print_32bit
-
+	xorl %ecx, %ecx# Clear the evc register to prevent loops
 	call print_newline # Prints new line!
-
-	#movl %es:8(%di), %ecx # Get the lower uint32_t of memory region length
-	#or %es:12(%di), %ecx
-	
-
-
-	inc %bp
-	add $24, %di
+	add $24, %di # Increment a page size
 
 skipentry:
 	.byte 0x66
 	testl %ebx, %ebx # if ebx resets to 0, the list is complete
 	jne memloop
 
+
+
 memfinish:
-	jmp halt
+	# We print the total avaliable memory size
+	call print_newline
+	pushw %si # Save si for printing...
+	pushw %cx # Save cx for printing...
+	leaw msg, %si
+	movw msg_len, %cx
+	call print
+	popw %cx # Restore state...
+	popw %si # Restore state...
+	pushl %ecx
+	movl %ebp, %ecx # Move the number of avaliable bytes for printing
+	call print_32bit
+	popl %ecx # Restore ecx
+	
+	pushw %si
+	pushw %cx
+	leaw msg_units, %si
+	movw msg_ulen, %cx
+	call print # Print the MB Units
+	popw %cx
+	popw %si
+	call print_newline
+
+	jmp halt # Hang the bootloader
+
+# ============= CALCULATION FUNCTIONS ===============
+# This assumes that we are always working mb, if kb, then its 1mb
+# This will shift and strip the right most 6 digits in decimal
+# And add such to ebp register
+strip_memory_length:
+	cmpw $0x1, %cx
+	jne not_avaliable
+
+	.byte 0x66
+	pushl %ecx
+		
+	movl %es:8(%di), %ecx # Get the lower uint32_t of the memory region len
+	or %es:12(%di), %ecx # Make sure its not zero
+	jz skipentry
+
+	cmpl $1000000, %ecx
+	jl kb_value
+
+	shrl $20, %ecx # We shift right 20 spaces to scale it to MB
+	add %ecx, %ebp
+
+	popl %ecx
+	ret
+
+kb_value:
+	add $1, %ebp
+	popl %ecx
+	ret
+
+not_avaliable:
+	ret
 
 # ============= ADDRESS PRINT FUNCTIONS =============
 
@@ -164,11 +232,8 @@ print_newline:
 print_32bit:
 	.byte 0x66
 	pushl %ecx
-	.byte 0x66
 	pushl %eax
-	.byte 0x66
 	pushl %ebx
-	.byte 0x66
 	pushl %edx
 
 	movb $'0', %al
@@ -179,9 +244,7 @@ print_32bit:
 	movb $0x0E, %ah
 	int $0x10
 
-	.byte 0x66
 	movl %ecx, %eax # Move the address from ecx to eax temporarily
-	.byte 0x66
 	xorl %ecx, %ecx
 	movw $8, %cx # 8 hex digits to be printed
 
@@ -217,51 +280,23 @@ print_digit:
 	popl %ecx
 
 	ret
-
-printA:	
-	# Just in case, we preserve state
-	pushw %si
-	pushw %cx
+# General printing for .asciz bits...
+print:
 	pushw %ax
 
-	leaw add_msg_beg, %si
-	movw add_msg_beg_len, %cx
 local_1:
 	lodsb
 	movb $0x0E, %ah
 	int $0x10
 	dec %cx
-	
+
 	testw %cx, %cx
 	jnz local_1
 
 	popw %ax
-	popw %cx
-	popw %si
 
 	ret
 
-printB:
-	pushw %si
-	pushw %cx
-	pushw %ax
-
-	leaw add_msg_end, %si
-	movw add_msg_end_len, %cx
-local_2:
-	lodsb
-	movb $0x0E, %ah
-	int $0x10
-	dec %cx
-
-	testw %cx, %cx
-	jnz local_2
-
-	popw %ax
-	popw %cx
-	popw %si
-
-	ret
 # ============= States to be in... =================
 
 error:
@@ -274,12 +309,7 @@ halt:
 	hlt
 	jmp halt
 
-# ============== Functions & messages ================
-print:	
-	pushw %dx # Save the return address onto DX Register
-	movb %al, %dl # Move 8 lower bits of AL to DL
-
-# ===
+# ============== ASCII Messages ================
 add_msg_beg:
 	.asciz "Address range["
 add_msg_beg_len:
@@ -296,9 +326,9 @@ msg_len:
 	.word . - msg
 # ===
 msg_units:
-	.asciz "MB"
+	.asciz " MB"
 msg_ulen:
-	.word . - msg_ulen
+	.word . - msg_units
 # ===
 	# Master Boot Record (MBR) Signature
 	.space 510 - (. - _start) # Pad until we slap the sig in the back
